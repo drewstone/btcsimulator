@@ -255,7 +255,7 @@ class SPVMiner(Miner):
                 time = numpy.random.exponential(1/self.hashrate, 1)[0]
                 # Wait for the block to be mined
                 yield self.env.timeout(time)
-                # Once the block is mined it needs to be added. An event is triggered
+                # If chain_head is valid then our block on top is valid, else invalid
                 if self.blocks[self.chain_head].valid:
                     valid = 1
                 else:
@@ -268,6 +268,7 @@ class SPVMiner(Miner):
                     miner_id=self.id,
                     size=block_size,
                     valid=valid)
+                # Once the block is mined it needs to be added. An event is triggered
                 self.notify_new_block(block)
             except simpy.Interrupt as i:
                 # When the mining process is interrupted it cannot continue until it is told to continue
@@ -278,11 +279,11 @@ class SPVMiner(Miner):
         # Validate every new block
         for block in self.blocks_new:
             # Block validation takes shorter times from SPV mining behavior
-            if t <= 0:
+            if SPVMiner.t <= 0:
                 factor = 0
             else:
                 # TODO: make factor dependent on other parameters
-                factor = t
+                factor = SPVMiner.t
             # Multiply factor by timeout
             yield self.env.timeout(factor * (block.size / self.verifyrate))
             valid = self.verify_block(block)
@@ -308,3 +309,29 @@ class SPVMiner(Miner):
         if not self.blocks[block.prev].valid:
             return -1
         return 1
+
+
+class AttackMiner(Miner):
+    def mine_block(self):
+        # Indefinitely mine new blocks
+        while True:
+            try:
+                # SPV miner blocksize is 0 (empty)
+                block_size = 0
+                # Determine the time the block will be mined depending on the miner hashrate
+                time = numpy.random.exponential(1/self.hashrate, 1)[0]
+                # Wait for the block to be mined
+                yield self.env.timeout(time)
+                # create invalid block
+                block = Block(
+                    prev=self.chain_head,
+                    height=self.blocks[self.chain_head].height + 1,
+                    time=self.env.now,
+                    miner_id=self.id,
+                    size=block_size,
+                    valid=0)
+                # Once the block is mined it needs to be added. An event is triggered
+                self.notify_new_block(block)
+            except simpy.Interrupt as i:
+                # When the mining process is interrupted it cannot continue until it is told to continue
+                yield self.continue_mining
