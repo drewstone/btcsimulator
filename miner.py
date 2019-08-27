@@ -48,6 +48,10 @@ class Miner(object):
         self.store()
         self.total_blocks = 0
 
+    def __getattr__(self, name):
+        # print("Creating attribute %s."%name)
+        setattr(self, name, 'default')
+
     def get_id(self):
         return get_id("miners")
 
@@ -77,6 +81,7 @@ class Miner(object):
                 time = numpy.random.exponential(1/self.hashrate, 1)[0]
                 # Wait for the block to be mined
                 yield self.env.timeout(time)
+                print(self.name)
                 # Once the block is mined it needs to be added. An event is triggered
                 block = Block(
                     prev=self.chain_head,
@@ -92,7 +97,7 @@ class Miner(object):
 
     def notify_new_block(self, block):
         self.total_blocks += 1
-        #print("%d \tI just mined a block at %7.4f" % (self.id, self.env.now))
+        print("{} \tI just mined a {} block at {}".format(self.name, "valid" if block.valid else "invalid", round(self.env.now, 4)))
         self.block_mined.succeed(block)
         # Create a new mining event
         self.block_mined = self.env.event()
@@ -225,25 +230,33 @@ class Miner(object):
 
 
 class HonestMiner(Miner):
-    def verify_block(self, block):
-        # If block was mined by the miner but the previous block is not the chain head it will not be valid
-        if block.miner_id == self.id and block.prev != self.chain_head:
-            return -1
-        # If the previous block is not in miner blocks it is not possible to validate current block
-        if block.prev not in self.blocks:
-            return 0
-        # If block height isnt previous block + 1 it will not be valid
-        if block.height != self.blocks[block.prev].height + 1:
-            return -1
-        # Ignore blocks with invalid parents
-        if not self.blocks[block.prev].valid:
-            return
-        return 1
+    # An Honest miner
+    def __init__(self, env, store, hashrate, verifyrate, seed_block):
+        self.name = 'honest'
+        super(HonestMiner, self).__init__( env, store, hashrate, verifyrate, seed_block)
+
+    def add_block(self, block):
+        # Add the seed block to the known blocks
+        self.blocks[sha256(block)] = block
+        # Store the block in redis
+        r.zadd("miners:" + str(self.id) + ":blocks", block.height, sha256(block))
+        # Announce block if chain_head isn't empty
+        if self.chain_head == "*":
+            self.chain_head = sha256(block)
+        # If block height is greater than chain head and valid, update chain head and announce new head
+        if (block.height > self.blocks[self.chain_head].height) and block.valid:
+            self.chain_head = sha256(block)
+            self.announce_block(block)
 
 
 class SPVMiner(Miner):
-    # Default validation time parameter
-    t = 0
+    # An SPV miner
+    def __init__(self, env, store, hashrate, verifyrate, seed_block, val_time):
+        self.chain_head_others = "*"
+        self.private_branch_len = 0
+        self.val_time = val_time
+        self.name = 'spv'
+        super(SPVMiner, self).__init__( env, store, hashrate, verifyrate, seed_block)
 
     def mine_block(self):
         # Indefinitely mine new blocks
@@ -279,13 +292,9 @@ class SPVMiner(Miner):
         # Validate every new block
         for block in self.blocks_new:
             # Block validation takes shorter times from SPV mining behavior
-            if SPVMiner.t <= 0:
-                factor = 0
-            else:
-                # TODO: make factor dependent on other parameters
-                factor = SPVMiner.t
-            # Multiply factor by timeout
-            yield self.env.timeout(factor * (block.size / self.verifyrate))
+            if self.val_time > 0:
+                # Multiply val_time by some timeout
+                yield self.env.timeout(self.val_time * (block.size / self.verifyrate))
             valid = self.verify_block(block)
             if valid == 1:
                 self.add_block(block)
@@ -295,23 +304,50 @@ class SPVMiner(Miner):
                 blocks_later.append(block)
         self.blocks_new = blocks_later
 
-    def verify_block(self, block):
-        # If block was mined by the miner but the previous block is not the chain head it will not be valid
-        if block.miner_id == self.id and block.prev != self.chain_head:
-            return -1
-        # If the previous block is not in miner blocks it is not possible to validate current block
-        if block.prev not in self.blocks:
-            return 0
-        # If block height isnt previous block + 1 it will not be valid
-        if block.height != self.blocks[block.prev].height + 1:
-            return -1
-        # If prev_block is invalid, reject
-        if not self.blocks[block.prev].valid:
-            return -1
-        return 1
-
 
 class AttackMiner(Miner):
+    # A Malicious miner
+    def __init__(self, env, store, hashrate, verifyrate, seed_block, tgt_cfrms):
+        self.name = 'attack'
+        self.chain_head_others = "*"
+        self.tgt_cfrms = tgt_cfrms
+        self.invalid_lead = 0
+        self.honest_lead = 0
+        super(AttackMiner, self).__init__( env, store, hashrate, verifyrate, seed_block)
+
+    def add_block(self, block):
+        # Add the seed block to the known blocks
+        self.blocks[sha256(block)] = block
+        # Store the block in redis
+        r.zadd("miners:" + str(self.id) + ":blocks", block.height, sha256(block))
+        # Announce block if chain_head isn't empty
+        if self.chain_head == "*":
+            self.chain_head = sha256(block)
+            self.chain_head_others = sha256(block)
+            return
+        # if attack miner mined the block
+        if (block.miner_id == self.id) and (block.height > self.blocks[self.chain_head].height):
+            delta_prev = self.blocks[self.chain_head].height - self.blocks[self.chain_head_others].height
+            self.chain_head = sha256(block)
+            self.invalid_lead += 1
+            self.announce_block(self.chain_head)
+
+        if (block.miner_id != self.id):
+            if (not block.valid) and (block.height > self.blocks[self.chain_head].height):
+                self.chain_head = sha256(block)
+                self.invalid_lead += 1
+                self.announce_block(self.chain_head)
+
+            if block.valid:
+                self.honest_lead += 1
+                if self.honest_lead == self.tgt_cfrms:
+                    self.chain_head = sha256(block)
+                    self.announce_block(self.chain_head)
+
+        if self.honest_lead == self.tgt_cfrms or self.invalid_lead == self.tgt_cfrms:
+            self.honest_lead = 0
+            self.invalid_lead = 0
+
     def mine_block(self):
         # Indefinitely mine new blocks
         while True:

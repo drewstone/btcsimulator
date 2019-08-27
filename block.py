@@ -24,3 +24,6 @@ class Block:
         r.hmset(key, {'prev': self.prev, 'height':self.height, 'time': self.time, 'size': self.size, 'valid': self.valid, 'miner': self.miner_id})
         # Store reference block in the miner's blocks set
         r.zadd("miners:" + str(self.miner_id) + ":blocks-mined", self.height, sha256(self))
+
+    def __str__(self):
+        return "{}, {}, {}, {}, {}".format(self.height, self.time, self.miner_id, self.valid, str(sha256(self)))
