@@ -62,7 +62,7 @@ class Simulator:
         return 0
 
     @staticmethod
-    def mixed_spv_attack(alpha=0.5, beta=0.5, days=10, target_confirmations=6):
+    def mixed_spv_attack(alpha=0.5, beta=0.5, days=10, target_confirmations=3):
         if (alpha + beta > 1.0): raise ValueError("Invalid power fractions")
         # Convert simulation days to seconds
         simulation_time = moment.get_seconds(days)
@@ -71,13 +71,19 @@ class Simulator:
         except ConnectionError:
             return -1
         # Store in redis the simulation event names
-        configure_event_names([Miner.BLOCK_REQUEST, Miner.BLOCK_RESPONSE, Miner.BLOCK_NEW, Miner.HEAD_NEW])
+        configure_event_names([
+            Miner.BLOCK_REQUEST,
+            Miner.BLOCK_RESPONSE,
+            Miner.BLOCK_NEW,
+            Miner.HEAD_NEW,
+            AttackMiner.WIN,
+            AttackMiner.LOSE
+        ])
         # Create simpy environment
         env = simpy.Environment()
         store = simpy.FilterStore(env)
-        print('1')
         # Create the seed block
-        seed_block = Block(None, 0, env.now, -1, 0, 1)
+        seed_block = Block(None, 0, env.now, -1, 'seed', 0, 1)
         # Create miners
         miners = []
         # This dict is used to store the connections between miners, so they are not created twice
@@ -85,7 +91,6 @@ class Simulator:
         attack_miner = AttackMiner(env, store, alpha * Miner.BLOCK_RATE, Miner.VERIFY_RATE, seed_block, target_confirmations)
         miners = [honest_miner, attack_miner]
         Miner.connect(honest_miner, attack_miner)
-        print('2')
         if alpha + beta < 1.0:
             # fraction of normal validation time to spend
             val_time = 0.1
@@ -93,18 +98,19 @@ class Simulator:
             miners.append(spv_miner)
             Miner.connect(honest_miner, spv_miner)
             Miner.connect(attack_miner, spv_miner)
-            print('3')
 
         for miner in miners: miner.start()
-        print('4')
         start = time.time()
         # Start simulation until limit. Time unit is seconds
-        env.run(until=simulation_time)
+        env.run(until=simpy.events.AnyOf(env, [
+            attack_miner.win,
+            attack_miner.lose,
+        ]))
         end = time.time()
         print("Simulation took: %1.4f seconds" % (end - start))
         # Store in redis simulation days
         store_days(days)
-        for miner in miners: print(miner.blocks[miner.chain_head].height, miner.chain_head)
+        for miner in miners: print(miner.name, miner.blocks[miner.chain_head].height, miner.chain_head)
         # After simulation store every miner head, so their chain can be built again
         for miner in miners: r.hset("miners:" + repr(miner.id), "head", miner.chain_head)
         # Notify simulation ended
@@ -114,4 +120,4 @@ class Simulator:
 
 if __name__ == '__main__':
     # Simulator.standard(3, 1)
-    Simulator.mixed_spv_attack(0.4, 0.5, 1)
+    Simulator.mixed_spv_attack(0.4, 0.6, 1)

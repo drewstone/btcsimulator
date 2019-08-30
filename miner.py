@@ -13,6 +13,7 @@ class Miner(object):
     HEAD_NEW = 3 # I have a new chain head!
     BLOCK_NEW = 4 # Just mined a new block!
 
+
     # Network block rate a.k.a 1 block every ten minutes
     BLOCK_RATE = 1.0 / 600.0
     # A miner is able to verify 200KBytes per seconds
@@ -23,8 +24,9 @@ class Miner(object):
         self.env = env
         # Get miner id from redis
         self.id = self.get_id()
+        # print(self.id)
         # Socket
-        self.socket = Socket(env, store, self.id)
+        self.socket = Socket(env, store, self.id, self.name)
         # Miner computing percentage of total network
         self.hashrate = hashrate
         # Miner block erification rate
@@ -49,7 +51,7 @@ class Miner(object):
         self.total_blocks = 0
 
     def __getattr__(self, name):
-        # print("Creating attribute %s."%name)
+        print("Creating attribute %s."%name)
         setattr(self, name, 'default')
 
     def get_id(self):
@@ -81,13 +83,13 @@ class Miner(object):
                 time = numpy.random.exponential(1/self.hashrate, 1)[0]
                 # Wait for the block to be mined
                 yield self.env.timeout(time)
-                print(self.name)
                 # Once the block is mined it needs to be added. An event is triggered
                 block = Block(
                     prev=self.chain_head,
                     height=self.blocks[self.chain_head].height + 1,
                     time=self.env.now,
                     miner_id=self.id,
+                    miner_name=self.name,
                     size=block_size,
                     valid=1)
                 self.notify_new_block(block)
@@ -97,7 +99,12 @@ class Miner(object):
 
     def notify_new_block(self, block):
         self.total_blocks += 1
-        print("{} \tI just mined a {} block at {}".format(self.name, "valid" if block.valid else "invalid", round(self.env.now, 4)))
+        print("height  = {}, name = {}, valid = {}, time = {}, hash = {}".format(
+            block.height,
+            self.name,
+            (block.valid == 1),
+            round(self.env.now, 4),
+            sha256(block)))
         self.block_mined.succeed(block)
         # Create a new mining event
         self.block_mined = self.env.event()
@@ -125,7 +132,7 @@ class Miner(object):
         # If block height is greater than chain head, update chain head and announce new head
         if (block.height > self.blocks[self.chain_head].height):
             self.chain_head = sha256(block)
-            self.announce_block(block)
+            self.announce_block(self.chain_head)
 
     def wait_for_new_block(self):
         while True:
@@ -135,7 +142,7 @@ class Miner(object):
             self.stop_mining()
             #print("%d \tI stop mining" % self.id)
             for event, block in blocks.items():
-                # print("Miner %d - mined block at %7.4f" %(self.id, self.env.now))
+                # print("%s ||| Miner %s - mined block at %7.4f" %(self.name, block.miner_name, self.env.now))
                 # Add the new block to the pending ones
                 self.blocks_new.append(block)
                 # Process new blocks
@@ -174,11 +181,11 @@ class Miner(object):
     def announce_block(self, block):
         if self.id == 8:
             print("Announce %s - %s" %(block, self.blocks[block].miner_id))
-        self.broadcast(Miner.HEAD_NEW, sha256(block))
+        self.broadcast(Miner.HEAD_NEW, block)
 
     # Request a block to all links
     def request_block(self, block, to=None):
-        #Logger.log(self.env.now, self.id, "REQUEST", block)
+        # print(self.env.now, self.name, "REQUEST", block)
         if to is None:
             self.broadcast(Miner.BLOCK_REQUEST, block)
         else:
@@ -232,7 +239,7 @@ class Miner(object):
 class HonestMiner(Miner):
     # An Honest miner
     def __init__(self, env, store, hashrate, verifyrate, seed_block):
-        self.name = 'honest'
+        self.name = 'hon'
         super(HonestMiner, self).__init__( env, store, hashrate, verifyrate, seed_block)
 
     def add_block(self, block):
@@ -246,7 +253,7 @@ class HonestMiner(Miner):
         # If block height is greater than chain head and valid, update chain head and announce new head
         if (block.height > self.blocks[self.chain_head].height) and block.valid:
             self.chain_head = sha256(block)
-            self.announce_block(block)
+            self.announce_block(self.chain_head)
 
 
 class SPVMiner(Miner):
@@ -269,7 +276,7 @@ class SPVMiner(Miner):
                 # Wait for the block to be mined
                 yield self.env.timeout(time)
                 # If chain_head is valid then our block on top is valid, else invalid
-                if self.blocks[self.chain_head].valid:
+                if self.blocks[self.chain_head].valid == 1:
                     valid = 1
                 else:
                     valid = 0
@@ -279,6 +286,7 @@ class SPVMiner(Miner):
                     height=self.blocks[self.chain_head].height + 1,
                     time=self.env.now,
                     miner_id=self.id,
+                    miner_name=self.name,
                     size=block_size,
                     valid=valid)
                 # Once the block is mined it needs to be added. An event is triggered
@@ -306,13 +314,20 @@ class SPVMiner(Miner):
 
 
 class AttackMiner(Miner):
+    WIN = 5
+    LOSE = 6
+
     # A Malicious miner
     def __init__(self, env, store, hashrate, verifyrate, seed_block, tgt_cfrms):
-        self.name = 'attack'
+        self.name = 'att'
         self.chain_head_others = "*"
         self.tgt_cfrms = tgt_cfrms
-        self.invalid_lead = 0
-        self.honest_lead = 0
+        self.invalid_len = 0
+        self.honest_len = 0
+        # Create event to notify when attacker wins
+        self.win = env.event()
+        # Create event to notify when attacker loses
+        self.lose = env.event()
         super(AttackMiner, self).__init__( env, store, hashrate, verifyrate, seed_block)
 
     def add_block(self, block):
@@ -324,36 +339,41 @@ class AttackMiner(Miner):
         if self.chain_head == "*":
             self.chain_head = sha256(block)
             self.chain_head_others = sha256(block)
-            return
-        # if attack miner mined the block
-        if (block.miner_id == self.id) and (block.height > self.blocks[self.chain_head].height):
-            delta_prev = self.blocks[self.chain_head].height - self.blocks[self.chain_head_others].height
-            self.chain_head = sha256(block)
-            self.invalid_lead += 1
-            self.announce_block(self.chain_head)
 
-        if (block.miner_id != self.id):
-            if (not block.valid) and (block.height > self.blocks[self.chain_head].height):
+        if not block.valid:
+            if block.height > self.blocks[self.chain_head].height:
                 self.chain_head = sha256(block)
-                self.invalid_lead += 1
+                self.invalid_len += 1
                 self.announce_block(self.chain_head)
-
-            if block.valid:
-                self.honest_lead += 1
-                if self.honest_lead == self.tgt_cfrms:
-                    self.chain_head = sha256(block)
-                    self.announce_block(self.chain_head)
-
-        if self.honest_lead == self.tgt_cfrms or self.invalid_lead == self.tgt_cfrms:
-            self.honest_lead = 0
-            self.invalid_lead = 0
+        else:
+            if block.height > self.blocks[self.chain_head_others].height:
+                self.chain_head_others = sha256(block)
+                # if attacker has already forked to invalid chain, we increment the counter
+                if self.invalid_len > 0:
+                    # print('Honest network found higher block with attacker started')
+                    self.honest_len += 1
+                    # if honest network receives "k" confirmations first, we reset
+                    if self.honest_len == self.tgt_cfrms:
+                        self.lose.succeed()
+                        self.chain_head = sha256(block)
+                        print('att - new chain head = {}, height = {}'.format(self.chain_head, self.honest_len))
+                        self.announce_block(self.chain_head)
+                else:
+                    if block.height > self.blocks[self.chain_head].height:
+                        self.chain_head = sha256(block)
+                        print('att - new chain head = {}, height = {}'.format(self.chain_head, self.honest_len))
+                        self.announce_block(self.chain_head)
+        # if the attacker gets the final block for target confirmations here, reset values
+        if self.invalid_len == self.tgt_cfrms or self.honest_len == self.tgt_cfrms:
+            self.win.succeed()
+            self.honest_len = 0
+            self.invalid_len = 0
 
     def mine_block(self):
         # Indefinitely mine new blocks
         while True:
             try:
-                # SPV miner blocksize is 0 (empty)
-                block_size = 0
+                block_size = 1024*200*numpy.random.random()
                 # Determine the time the block will be mined depending on the miner hashrate
                 time = numpy.random.exponential(1/self.hashrate, 1)[0]
                 # Wait for the block to be mined
@@ -364,6 +384,7 @@ class AttackMiner(Miner):
                     height=self.blocks[self.chain_head].height + 1,
                     time=self.env.now,
                     miner_id=self.id,
+                    miner_name=self.name,
                     size=block_size,
                     valid=0)
                 # Once the block is mined it needs to be added. An event is triggered
