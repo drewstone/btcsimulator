@@ -19,6 +19,8 @@ class Miner(object):
     # A miner is able to verify 200KBytes per seconds
     VERIFY_RATE = 200*1024
 
+    LOGGING_MODE = "none"
+
     def __init__(self, env, store, hashrate, verifyrate, seed_block):
         # Simulation environment
         self.env = env
@@ -51,7 +53,7 @@ class Miner(object):
         self.total_blocks = 0
 
     def __getattr__(self, name):
-        print("Creating attribute %s."%name)
+        if Miner.LOGGING_MODE == "debug": print("Creating attribute %s."%name)
         setattr(self, name, 'default')
 
     def get_id(self):
@@ -99,7 +101,7 @@ class Miner(object):
 
     def notify_new_block(self, block):
         self.total_blocks += 1
-        print("height  = {}, name = {}, valid = {}, time = {}, hash = {}".format(
+        if Miner.LOGGING_MODE == "debug": print("height  = {}, name = {}, valid = {}, time = {}, hash = {}".format(
             block.height,
             self.name,
             (block.valid == 1),
@@ -180,7 +182,7 @@ class Miner(object):
     # Announce new head when block is added to the chain
     def announce_block(self, block):
         if self.id == 8:
-            print("Announce %s - %s" %(block, self.blocks[block].miner_id))
+            if Miner.LOGGING_MODE == "debug": print("Announce %s - %s" %(block, self.blocks[block].miner_id))
         self.broadcast(Miner.HEAD_NEW, block)
 
     # Request a block to all links
@@ -356,7 +358,7 @@ class AttackMiner(Miner):
                     # or if the attacker has not forked, we restart on top of the honest network
                     if ((block.height > self.blocks[self.chain_head].height and self.invalid_len == 0) or self.honest_len == self.tgt_cfrms):
                         self.chain_head = sha256(block)
-                        print('att - new chain head = {}, height = {}'.format(self.chain_head, self.honest_len))
+                        if Miner.LOGGING_MODE == "debug": print('att - new chain head = {}, height = {}'.format(self.chain_head, self.honest_len))
                         self.announce_block(self.chain_head)
                 else:
                     self.honest_len += 1

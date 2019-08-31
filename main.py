@@ -11,6 +11,7 @@ class Simulator:
 
     SIMULATION_ENDED = "SIMULATION_ENDED"
     PUBSUB_CHANNEL = "/btcsimulator"
+    LOGGING_MODE = "none"
 
     @staticmethod
     def standard(miners_number=20, days=10):
@@ -107,17 +108,28 @@ class Simulator:
             attack_miner.lose,
         ]))
         end = time.time()
-        print("Simulation took: %1.4f seconds" % (end - start))
+        if Simulator.LOGGING_MODE == "debug": print("Simulation took: %1.4f seconds" % (end - start))
         # Store in redis simulation days
         store_days(days)
-        for miner in miners: print(miner.name, miner.blocks[miner.chain_head].height, miner.chain_head)
+        # for miner in miners: print(miner.name, miner.blocks[miner.chain_head].height, miner.chain_head)
         # After simulation store every miner head, so their chain can be built again
         for miner in miners: r.hset("miners:" + repr(miner.id), "head", miner.chain_head)
         # Notify simulation ended
         r.publish(Simulator.PUBSUB_CHANNEL, Simulator.SIMULATION_ENDED)
-        return 0
+        return (
+            honest_miner.blocks[honest_miner.chain_head].height,
+            attack_miner.blocks[attack_miner.chain_head].height
+        )
 
 
 if __name__ == '__main__':
     # Simulator.standard(3, 1)
-    Simulator.mixed_spv_attack(0.1, 0.6, 1)
+    wins, loses = 0, 0
+    for i in range(1000):
+        hon_ht, att_ht = Simulator.mixed_spv_attack(0.3, 0.6, 1, 10)
+        if hon_ht < att_ht:
+            wins += 1
+        else:
+            loses += 1
+
+    print(wins, loses, wins * 1.0 / (wins + loses))
