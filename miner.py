@@ -328,6 +328,7 @@ class AttackMiner(Miner):
         self.win = env.event()
         # Create event to notify when attacker loses
         self.lose = env.event()
+        self.restart = False
         super(AttackMiner, self).__init__( env, store, hashrate, verifyrate, seed_block)
 
     def add_block(self, block):
@@ -348,24 +349,23 @@ class AttackMiner(Miner):
         else:
             if block.height > self.blocks[self.chain_head_others].height:
                 self.chain_head_others = sha256(block)
-                # if attacker has already forked to invalid chain, we increment the counter
-                if self.invalid_len > 0:
-                    # print('Honest network found higher block with attacker started')
-                    self.honest_len += 1
-                    # if honest network receives "k" confirmations first, we reset
-                    if self.honest_len == self.tgt_cfrms:
-                        self.lose.succeed()
+                # do we restart the attack or is this a one-time simulation
+                if self.restart:
+                    if self.invalid_len > 0: self.honest_len += 1
+                    # if attacker has already forked to invalid chain, we increment the counter
+                    # or if the attacker has not forked, we restart on top of the honest network
+                    if ((block.height > self.blocks[self.chain_head].height and self.invalid_len == 0) or self.honest_len == self.tgt_cfrms):
                         self.chain_head = sha256(block)
                         print('att - new chain head = {}, height = {}'.format(self.chain_head, self.honest_len))
                         self.announce_block(self.chain_head)
                 else:
-                    if block.height > self.blocks[self.chain_head].height:
-                        self.chain_head = sha256(block)
-                        print('att - new chain head = {}, height = {}'.format(self.chain_head, self.honest_len))
-                        self.announce_block(self.chain_head)
+                    self.honest_len += 1
         # if the attacker gets the final block for target confirmations here, reset values
         if self.invalid_len == self.tgt_cfrms or self.honest_len == self.tgt_cfrms:
-            self.win.succeed()
+            if self.invalid_len == self.tgt_cfrms:
+                self.win.succeed()
+            else:
+                self.lose.succeed()
             self.honest_len = 0
             self.invalid_len = 0
 

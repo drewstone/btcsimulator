@@ -120,4 +120,4 @@ class Simulator:
 
 if __name__ == '__main__':
     # Simulator.standard(3, 1)
-    Simulator.mixed_spv_attack(0.4, 0.6, 1)
+    Simulator.mixed_spv_attack(0.1, 0.6, 1)
