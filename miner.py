@@ -52,6 +52,24 @@ class Miner(object):
         self.store()
         self.total_blocks = 0
 
+    def _reset(self):
+        self.stop_mining()
+        # Pointer to the block chain head
+        self.chain_head = '*'
+        # Hash with all the blocks the miner knows about
+        self.blocks = dict()
+        # Array with blocks needed to be processed
+        self.blocks_new = []
+        # Create event to notify when a block is mined
+        self.block_mined = env.event()
+        # Create event to notify when a new block arrives
+        self.block_received = env.event()
+        # Create event to notify when the mining process can continue
+        self.continue_mining = env.event()
+        self.mining = None
+        self.total_blocks = 0
+        self.keep_mining()
+
     def __getattr__(self, name):
         if Miner.LOGGING_MODE == "debug": print("Creating attribute %s."%name)
         setattr(self, name, 'default')
@@ -331,7 +349,13 @@ class AttackMiner(Miner):
         # Create event to notify when attacker loses
         self.lose = env.event()
         self.restart = False
+        self.num_restarts = 0
         super(AttackMiner, self).__init__( env, store, hashrate, verifyrate, seed_block)
+
+    def _reset(self):
+        self.invalid_len = 0
+        self.honest_len = 0
+        super()._reset()
 
     def add_block(self, block):
         # Add the seed block to the known blocks
@@ -365,8 +389,10 @@ class AttackMiner(Miner):
         # if the attacker gets the final block for target confirmations here, reset values
         if self.invalid_len == self.tgt_cfrms or self.honest_len == self.tgt_cfrms:
             if self.invalid_len == self.tgt_cfrms:
+                # self._reset()
                 self.win.succeed()
             else:
+                # self._reset()
                 self.lose.succeed()
             self.honest_len = 0
             self.invalid_len = 0

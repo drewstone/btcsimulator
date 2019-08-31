@@ -1,3 +1,8 @@
+import matplotlib
+matplotlib.use('TkAgg')
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import matplotlib.cm as cm
 from persistence import *
 from block import Block
 from miner import Miner, HonestMiner, SPVMiner, AttackMiner
@@ -122,14 +127,37 @@ class Simulator:
         )
 
 
+def run_mixed_mc(alpha=0.5, max_num_conf=5, num_sims=1000):
+    plt.clf()
+    fig, ax = plt.subplots()
+    for inx, beta in enumerate(i for i in numpy.arange(alpha, 1, 0.1) if i + alpha <= 1.0):
+        print(beta)
+        # Simulator.standard(3, 1)
+        xs, ys = [], []
+        for i, elt in enumerate(range(1, max_num_conf)):
+            print(elt)
+            wins, loses = 0, 0
+            for i in range(num_sims):
+                hon_ht, att_ht = Simulator.mixed_spv_attack(round(alpha, 2), round(beta, 2), 10, elt)
+                if hon_ht < att_ht:
+                    wins += 1
+                else:
+                    loses += 1
+            xs.append(elt)
+            ys.append(wins * 1.0 / (loses + wins))
+        ax.plot(xs, ys, label='β = {}, γ = {}'.format(round(beta, 2), round(1 - alpha - beta, 2)))
+    ax.set_title('Success probability with α = {}'.format(alpha))
+    ax.set_xlabel('Number of confirmations')
+    ax.set_ylabel('Probabilitiy of success')
+    ax.set_xticks(numpy.arange(1, max_num_conf, 5))
+    ax.set_yticks(numpy.arange(0, 1.0, 0.1))
+    plt.grid()
+    plt.legend()
+    plt.savefig('artifacts/sim-graph-{}.png'.format(alpha))
+
 if __name__ == '__main__':
     # Simulator.standard(3, 1)
-    wins, loses = 0, 0
-    for i in range(1000):
-        hon_ht, att_ht = Simulator.mixed_spv_attack(0.3, 0.6, 1, 10)
-        if hon_ht < att_ht:
-            wins += 1
-        else:
-            loses += 1
-
-    print(wins, loses, wins * 1.0 / (wins + loses))
+    run_mixed_mc(0.1)
+    run_mixed_mc(0.2)
+    run_mixed_mc(0.3)
+    run_mixed_mc(0.4)
