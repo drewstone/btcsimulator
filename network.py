@@ -25,8 +25,9 @@ class Link:
 
 
 class Socket:
-    def __init__(self, env, store, miner_id):
+    def __init__(self, env, store, miner_id, miner_name):
         self.miner_id = miner_id
+        self.miner_name = miner_name
         self.store = store
         self.env = env
         self.links = dict()

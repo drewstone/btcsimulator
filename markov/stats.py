@@ -53,7 +53,6 @@ def run():
 
 
 def run_split():
-    # target confirmations
     plt.clf()
     num = 50
     xs = np.arange(2, num, 1)
@@ -78,6 +77,33 @@ def run_split():
     plt.savefig('artifacts/split-graph.png'.format(beta))
 
 
+def run_for_plots(alpha=0.1):
+    plt.clf()
+    num = 30
+    xs = np.arange(2, num, 1)
+    betas = np.arange(alpha, 1, 0.1)
+    fig, ax = plt.subplots()
+    for _, beta in enumerate(betas):
+        if round(alpha, 1) + round(beta, 1) > 1: continue
+        ys = []
+        for k in range(2, num):
+            node_map, final_nodes = better_graph.split_graph(alpha, beta, k)
+            matrix = better_graph.markov_chain_gen(node_map)
+            converge = np.linalg.matrix_power(matrix, k * 3)
+            ys.append(converge[0][final_nodes[0]])
+        ax.plot(xs, ys, label='β = {}, γ = {}'.format(round(beta, 1), round(1 - alpha - beta, 1)))
+    ax.set_title('Success probability with α = {}'.format(alpha))
+    ax.set_xlabel('Number of confirmations')
+    ax.set_ylabel('Probabilitiy of success')
+    ax.set_xticks(np.arange(0, num, 10))
+    ax.set_yticks(np.arange(0, 0.6, 0.1))
+    plt.grid()
+    plt.legend()
+    plt.savefig('artifacts/split-graph-{}.png'.format(alpha))
+
 
 if __name__ == '__main__':
-    run_split()
+    run_for_plots(alpha=0.1)
+    run_for_plots(alpha=0.2)
+    run_for_plots(alpha=0.3)
+    run_for_plots(alpha=0.4)
