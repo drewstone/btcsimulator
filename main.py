@@ -125,14 +125,16 @@ class Simulator:
         return (attack_miner.wins, attack_miner.loses)
 
 
-def run_mixed_mc(alpha=0.5, max_num_conf=10):
+def run_mixed_mc(alpha=0.5, max_num_conf=21, days=10):
     plt.clf()
     fig, ax = plt.subplots()
-    for inx, beta in enumerate(i for i in numpy.arange(alpha, 1, 0.1) if i + alpha <= 1.0):
+    for inx, beta in enumerate([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]):
+        if alpha + beta > 1.0:
+            continue
         # Simulator.standard(3, 1)
         xs, ys = [], []
         for i, elt in enumerate(range(1, max_num_conf)):
-            wins, loses = Simulator.mixed_spv_attack(round(alpha, 2), round(beta, 2), 10, elt)
+            wins, loses = Simulator.mixed_spv_attack(round(alpha, 2), round(beta, 2), days * (elt + 1), elt)
             xs.append(elt)
             ys.append(wins * 1.0 / (loses + wins))
         ax.plot(xs, ys, label='β = {}, γ = {}'.format(round(beta, 2), round(1 - alpha - beta, 2)))
@@ -147,8 +149,4 @@ def run_mixed_mc(alpha=0.5, max_num_conf=10):
 
 if __name__ == '__main__':
     # Simulator.mixed_spv_attack(0.2, 0.5, 10, 6)
-    run_mixed_mc(0.1)
     run_mixed_mc(0.2)
-    run_mixed_mc(0.3)
-    run_mixed_mc(0.4)
-    
