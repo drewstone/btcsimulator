@@ -107,6 +107,7 @@ class Miner(object):
                     miner_name=self.name,
                     size=block_size,
                     valid=1)
+                print("{} mined a {} block at height: {}, time: {}, size: {}".format(self.name, 'valid' if block.valid else 'invalid', block.height, block.time, block.size))
                 self.notify_new_block(block)
             except simpy.Interrupt as i:
                 # When the mining process is interrupted it cannot continue until it is told to continue
@@ -130,10 +131,12 @@ class Miner(object):
         self.block_received = self.env.event()
 
     def stop_mining(self):
+        print('SSS | {} stopped mining'.format(self.name))
         self.mining.interrupt()
 
     def keep_mining(self):
         self.continue_mining.succeed()
+        print('CCC | {} continued mining'.format(self.name))
         self.continue_mining = self.env.event()
 
     def add_block(self, block):
@@ -185,6 +188,7 @@ class Miner(object):
         blocks_later = []
         # Validate every new block
         for block in self.blocks_new:
+            print('PPP | {} processing block at height {}'.format(self.name, block.height))
             # Block validation takes some time
             yield self.env.timeout(block.size / self.verifyrate)
             valid = self.verify_block(block)
@@ -288,6 +292,62 @@ class SPVMiner(Miner):
         self.name = 'spv'
         super(SPVMiner, self).__init__( env, store, hashrate, verifyrate, seed_block)
 
+    def start(self):
+        # Add the seed_block
+        self.add_block(self.seed_block)
+        # Start the process of adding blocks
+        self.w_new = self.env.process(self.wait_for_new_block())
+        # Receive network events
+        self.r_ev = self.env.process(self.receive_events())
+        # Start mining and store the process so it can be interrupted
+        self.mining = self.env.process(self.mine_block())
+
+    def process_new_blocks(self):
+        blocks_later = []
+        # Validate every new block
+        for block in self.blocks_new:
+            print('PPP | {} processing block at height {}'.format(self.name, block.height))
+            # Block validation is skipped for SPV miners
+            yield self.env.timeout(0.0000001)
+            valid = self.verify_block(block)
+            if valid == 1:
+                self.add_block(block)
+            elif valid == 0:
+                #Logger.log(self.env.now, self.id, "NEED_DATA", sha256(block))
+                self.request_block(block.prev)
+                blocks_later.append(block)
+        self.blocks_new = blocks_later
+
+    def wait_for_new_block(self):
+        while True:
+            try:
+                # Wait for a block to be mined or received
+                blocks = yield self.block_mined | self.block_received
+                # Interrupt the mining process so the block can be added
+                self.stop_mining()
+                #print("%d \tI stop mining" % self.id)
+                for event, block in blocks.items():
+                    print("BBB | {} - received block at {} mined by {}".format(self.name, self.env.now, block.miner_name))
+                    # Add the new block to the pending ones
+                    self.blocks_new.append(block)
+                    # Process new blocks
+                yield self.env.process(self.process_new_blocks())
+                # Keep mining
+                self.keep_mining()
+                if not self.blocks[self.chain_head].validated_yet and self.val_frac > 0:
+                    yield self.env.process(self.validate_chain_head())
+            except simpy.Interrupt as i:
+                # When the mining process is interrupted it cannot continue until it is told to continue
+                yield self.continue_mining
+
+    def validate_chain_head(self):
+        print('VVV | validating chain head for {}'.format(1000 * self.val_frac * (self.blocks[self.chain_head].size / self.verifyrate)))
+        # Block validation takes some time
+        yield self.env.timeout(self.val_frac * (self.blocks[self.chain_head].size / self.verifyrate))
+        self.blocks[self.chain_head].validated_yet = True
+        if not self.blocks[self.chain_head].valid:
+            self.chain_head = self.chain_head_others
+
     def mine_block(self):
         # Indefinitely mine new blocks
         while True:
@@ -312,28 +372,12 @@ class SPVMiner(Miner):
                     miner_name=self.name,
                     size=block_size,
                     valid=valid)
+                print("{} mined a {} block at height: {}, time: {}".format(self.name, 'valid' if block.valid else 'invalid', block.height, block.time))
                 # Once the block is mined it needs to be added. An event is triggered
                 self.notify_new_block(block)
             except simpy.Interrupt as i:
                 # When the mining process is interrupted it cannot continue until it is told to continue
                 yield self.continue_mining
-
-    def process_new_blocks(self):
-        blocks_later = []
-        # Validate every new block
-        for block in self.blocks_new:
-            # Block validation takes shorter times from SPV mining behavior
-            if self.val_frac > 0:
-                # Multiply val_frac by some timeout
-                yield self.env.timeout(self.val_frac * (block.size / self.verifyrate))
-            valid = self.verify_block(block)
-            if valid == 1:
-                self.add_block(block)
-            elif valid == 0:
-                #Logger.log(self.env.now, self.id, "NEED_DATA", sha256(block))
-                self.request_block(block.prev)
-                blocks_later.append(block)
-        self.blocks_new = blocks_later
 
 
 class AttackMiner(Miner):
@@ -356,7 +400,7 @@ class AttackMiner(Miner):
         self.lose = env.event()
         self.loses = 0
         # Restart simulation or continue attack
-        self.restart = True
+        self.restart = False
         self.num_restarts = 0
         self.other_agents = []
         super(AttackMiner, self).__init__(env, store, hashrate, verifyrate, seed_block)
@@ -445,6 +489,7 @@ class AttackMiner(Miner):
                     miner_name=self.name,
                     size=block_size,
                     valid=0)
+                print("{} mined a {} block at height: {}, time: {}, size: {}".format(self.name, 'valid' if block.valid else 'invalid', block.height, block.time, block.size))
                 # Once the block is mined it needs to be added. An event is triggered
                 self.notify_new_block(block)
             except simpy.Interrupt as i:

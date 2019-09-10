@@ -68,7 +68,7 @@ class Simulator:
         return 0
 
     @staticmethod
-    def mixed_spv_attack(alpha=0.5, beta=0.5, days=10, target_confirmations=3, tSPV=0.0):
+    def mixed_spv_attack(alpha=0.5, beta=0.5, days=10, target_confirmations=3, tSPV=0.5):
         if (alpha + beta > 1.0): raise ValueError("Invalid power fractions")
         # Convert simulation days to seconds
         simulation_time = moment.get_seconds(days)
@@ -107,6 +107,7 @@ class Simulator:
             Miner.connect(attack_miner, spv_miner)
 
         attack_miner.set_agents(other_agents)
+        print('miner powers: [honest, attack, (spv)]: {}'.format(list(map(lambda x: x.hashrate, miners))))
         for miner in miners: miner.start()
         start = time.time()
         # Start simulation until limit. Time unit is seconds
@@ -148,5 +149,5 @@ def run_mixed_mc(alpha=0.5, max_num_conf=21, days=10):
     plt.savefig('artifacts/cont-graph-{}.png'.format(alpha))
 
 if __name__ == '__main__':
-    # Simulator.mixed_spv_attack(0.2, 0.5, 10, 6)
-    run_mixed_mc(0.2)
+    Simulator.mixed_spv_attack(0.2, 0.5, 1, 6)
+    # run_mixed_mc(0.2)

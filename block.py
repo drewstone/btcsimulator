@@ -18,6 +18,8 @@ class Block:
         self.valid = valid
         # When a block is created it is stored in redis
         self.store()
+        # helper for SPV miner
+        self.validated_yet = False
 
     def store(self):
         key = 'blocks:' + str(sha256(self))
