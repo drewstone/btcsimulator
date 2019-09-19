@@ -23,8 +23,11 @@ class Simulator:
         # Convert simulation days to seconds
         simulation_time = moment.get_seconds(days)
         try:
+            print('here')
             clear_db()
+            print('here')
         except ConnectionError:
+            print('here')
             return -1
         # Store in redis the simulation event names
         configure_event_names([Miner.BLOCK_REQUEST, Miner.BLOCK_RESPONSE, Miner.BLOCK_NEW, Miner.HEAD_NEW])
@@ -69,6 +72,12 @@ class Simulator:
 
     @staticmethod
     def mixed_spv_attack(alpha=0.5, beta=0.5, days=10, target_confirmations=3, tSPV=0.5):
+        print("alpha - {}, beta = {}, days - {}, tgt - {}, tSPV - {}".format(
+            alpha,
+            beta,
+            days,
+            target_confirmations,
+            tSPV))
         if (alpha + beta > 1.0): raise ValueError("Invalid power fractions")
         # Convert simulation days to seconds
         simulation_time = moment.get_seconds(days)
@@ -126,7 +135,7 @@ class Simulator:
         return (attack_miner.wins, attack_miner.loses)
 
 
-def run_mixed_mc(alpha=0.5, max_num_conf=21, days=10):
+def run_plain_simulation_with_varying_gamma(alpha=0.5, max_num_conf=21, days=10):
     plt.clf()
     fig, ax = plt.subplots()
     for inx, beta in enumerate([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]):
@@ -148,6 +157,47 @@ def run_mixed_mc(alpha=0.5, max_num_conf=21, days=10):
     plt.legend()
     plt.savefig('artifacts/cont-graph-{}.png'.format(alpha))
 
+def run_mixed_sim_with_varying_attack_env(alpha, beta, gamma, max_num_conf=21, days=1):
+    if alpha + beta + gamma > 1.0: raise ValueError("Invalid setup of power")
+    plt.clf()
+    fig, ax = plt.subplots()
+    setup1 = [alpha, beta, gamma, 0.0]
+    setup2 = [alpha + gamma, beta, 0.0, 0.0]
+    setup3 = [alpha, beta + gamma, 0.0, 0.0]
+    # setup4 = [alpha, beta, gamma, 1.0]
+    # setup5 = [alpha + gamma, beta, 0.0, 1.0]
+    # setup6 = [alpha, beta + gamma, 0.0, 1.0]
+    setups = [
+        setup1,
+        setup2,
+        setup3,
+        # setup4,
+        # setup5,
+        # setup6
+    ]
+    for inx, s in enumerate(setups):
+        xs, ys = [], []
+        for i, elt in enumerate(range(1, max_num_conf)):
+            wins, loses = Simulator.mixed_spv_attack(
+                alpha=s[0],
+                beta=s[1],
+                days=10 * days * (elt + 1),
+                target_confirmations=elt,
+                tSPV=s[3])
+            xs.append(elt)
+            ys.append(wins * 1.0 / (loses + wins))
+        print(xs, ys)
+        ax.plot(xs, ys, label='β = {}, γ = {}'.format(s[1], s[2]))
+    ax.set_title('Success probability with varying agent environments')
+    ax.set_xlabel('Number of confirmations')
+    ax.set_ylabel('Probabilitiy of success')
+    ax.set_xticks(numpy.arange(1, max_num_conf, 1))
+    ax.set_yticks(numpy.arange(0, 1.0, 0.1))
+    plt.grid()
+    plt.legend()
+    plt.savefig('artifacts/mixed-graph-{}-{}.png'.format(alpha, beta))    
+
 if __name__ == '__main__':
-    Simulator.mixed_spv_attack(0.2, 0.5, 1, 6)
-    # run_mixed_mc(0.2)
+    Simulator.mixed_spv_attack(0.2, 0.5, 1, 6, 1.0)
+    # run_plain_simulation_with_varying_gamma(0.2)
+    # run_mixed_sim_with_varying_attack_env(0.2, 0.4, 0.3)

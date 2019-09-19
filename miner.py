@@ -19,7 +19,7 @@ class Miner(object):
     # A miner is able to verify 200KBytes per seconds
     VERIFY_RATE = 200*1024
 
-    LOGGING_MODE = "none"
+    LOGGING_MODE = "debug"
 
     def __init__(self, env, store, hashrate, verifyrate, seed_block):
         # Simulation environment
@@ -77,7 +77,6 @@ class Miner(object):
         r.hmset(key, {"hashrate": self.hashrate / Miner.BLOCK_RATE, "verifyrate": self.verifyrate})
         r.sadd("miners", self.id)
 
-
     def start(self):
         # Add the seed_block
         self.add_block(self.seed_block)
@@ -107,7 +106,7 @@ class Miner(object):
                     miner_name=self.name,
                     size=block_size,
                     valid=1)
-                print("{} mined a {} block at height: {}, time: {}, size: {}".format(self.name, 'valid' if block.valid else 'invalid', block.height, block.time, block.size))
+                if Miner.LOGGING_MODE == "debug": print("{} mined a {} block at height: {}, time: {}, size: {}".format(self.name, 'valid' if block.valid else 'invalid', block.height, block.time, block.size))
                 self.notify_new_block(block)
             except simpy.Interrupt as i:
                 # When the mining process is interrupted it cannot continue until it is told to continue
@@ -131,12 +130,12 @@ class Miner(object):
         self.block_received = self.env.event()
 
     def stop_mining(self):
-        print('SSS | {} stopped mining'.format(self.name))
+        if Miner.LOGGING_MODE == "debug": print('SSS | {} stopped mining'.format(self.name))
         self.mining.interrupt()
 
     def keep_mining(self):
         self.continue_mining.succeed()
-        print('CCC | {} continued mining'.format(self.name))
+        if Miner.LOGGING_MODE == "debug": print('CCC | {} continued mining'.format(self.name))
         self.continue_mining = self.env.event()
 
     def add_block(self, block):
@@ -188,7 +187,7 @@ class Miner(object):
         blocks_later = []
         # Validate every new block
         for block in self.blocks_new:
-            print('PPP | {} processing block at height {}'.format(self.name, block.height))
+            if Miner.LOGGING_MODE == "debug": print('PPP | {} processing block at height {}'.format(self.name, block.height))
             # Block validation takes some time
             yield self.env.timeout(block.size / self.verifyrate)
             valid = self.verify_block(block)
@@ -204,11 +203,12 @@ class Miner(object):
     def announce_block(self, block):
         if self.id == 8:
             if Miner.LOGGING_MODE == "debug": print("Announce %s - %s" %(block, self.blocks[block].miner_id))
+        print("BCAST | {}".format(self.name))
         self.broadcast(Miner.HEAD_NEW, block)
 
     # Request a block to all links
     def request_block(self, block, to=None):
-        # print(self.env.now, self.name, "REQUEST", block)
+        print(self.env.now, self.name, "REQUEST", block)
         if to is None:
             self.broadcast(Miner.BLOCK_REQUEST, block)
         else:
@@ -306,7 +306,7 @@ class SPVMiner(Miner):
         blocks_later = []
         # Validate every new block
         for block in self.blocks_new:
-            print('PPP | {} processing block at height {}'.format(self.name, block.height))
+            if Miner.LOGGING_MODE == "debug": print('PPP | {} processing block at height {}'.format(self.name, block.height))
             # Block validation is skipped for SPV miners
             yield self.env.timeout(0.0000001)
             valid = self.verify_block(block)
@@ -318,6 +318,24 @@ class SPVMiner(Miner):
                 blocks_later.append(block)
         self.blocks_new = blocks_later
 
+    def add_block(self, block):
+        # Add the seed block to the known blocks
+        self.blocks[sha256(block)] = block
+        # Store the block in redis
+        r.zadd("miners:" + str(self.id) + ":blocks", block.height, sha256(block))
+        # Announce block if chain_head isn't empty
+        if self.chain_head == "*":
+            self.chain_head = sha256(block)
+            self.chain_head_others = sha256(block)
+        # If block height is greater than chain head, update chain head and announce new head
+        if block.height > self.blocks[self.chain_head].height:
+            self.chain_head = sha256(block)
+            self.announce_block(self.chain_head)
+        # keep track of other chain
+        if block.height > self.blocks[self.chain_head_others].height and block.valid:
+            self.chain_head_others = sha256(block)
+            self.announce_block(self.chain_head_others)
+
     def wait_for_new_block(self):
         while True:
             try:
@@ -327,26 +345,31 @@ class SPVMiner(Miner):
                 self.stop_mining()
                 #print("%d \tI stop mining" % self.id)
                 for event, block in blocks.items():
-                    print("BBB | {} - received block at {} mined by {}".format(self.name, self.env.now, block.miner_name))
+                    if Miner.LOGGING_MODE == "debug": print("BBB | {} - received block at {}, height - {}, mined by {}, hash - {}".format(self.name, self.env.now, block.height, block.miner_name, sha256(block)))
                     # Add the new block to the pending ones
                     self.blocks_new.append(block)
                     # Process new blocks
                 yield self.env.process(self.process_new_blocks())
                 # Keep mining
+                if self.blocks[self.chain_head].height > 0:
+                    if not self.blocks[self.chain_head].validated_yet and self.val_frac > 0:
+                        self.env.process(self.validate_chain_head())
+
                 self.keep_mining()
-                if not self.blocks[self.chain_head].validated_yet and self.val_frac > 0:
-                    yield self.env.process(self.validate_chain_head())
             except simpy.Interrupt as i:
                 # When the mining process is interrupted it cannot continue until it is told to continue
                 yield self.continue_mining
 
     def validate_chain_head(self):
-        print('VVV | validating chain head for {}'.format(1000 * self.val_frac * (self.blocks[self.chain_head].size / self.verifyrate)))
+        if Miner.LOGGING_MODE == "debug": print('VVV | validating chain head for {}'.format(self.val_frac * (self.blocks[self.chain_head].size / self.verifyrate)))
         # Block validation takes some time
         yield self.env.timeout(self.val_frac * (self.blocks[self.chain_head].size / self.verifyrate))
         self.blocks[self.chain_head].validated_yet = True
         if not self.blocks[self.chain_head].valid:
+            if Miner.LOGGING_MODE == "debug": print("Switched chains after validating")
+            if Miner.LOGGING_MODE == "debug": print(self.chain_head, self.chain_head_others)
             self.chain_head = self.chain_head_others
+            if Miner.LOGGING_MODE == "debug": print('here after switching')
 
     def mine_block(self):
         # Indefinitely mine new blocks
@@ -372,7 +395,7 @@ class SPVMiner(Miner):
                     miner_name=self.name,
                     size=block_size,
                     valid=valid)
-                print("{} mined a {} block at height: {}, time: {}".format(self.name, 'valid' if block.valid else 'invalid', block.height, block.time))
+                if Miner.LOGGING_MODE == "debug": print("{} mined a {} block at height: {}, time: {}".format(self.name, 'valid' if block.valid else 'invalid', block.height, block.time))
                 # Once the block is mined it needs to be added. An event is triggered
                 self.notify_new_block(block)
             except simpy.Interrupt as i:
@@ -453,7 +476,7 @@ class AttackMiner(Miner):
                     # or if the attacker has not forked, we restart on top of the honest network
                     if ((block.height > self.blocks[self.chain_head].height and self.invalid_len == 0) or self.honest_len == self.tgt_cfrms):
                         self.chain_head = sha256(block)
-                        if Miner.LOGGING_MODE == "debug": print('att - new chain head = {}, height = {}'.format(self.chain_head, self.honest_len))
+                        if Miner.LOGGING_MODE == "debug": print('att - new chain head = {}, honest_lead = {}'.format(self.chain_head, self.honest_len))
                         self.announce_block(self.chain_head)
                 else:
                     self.honest_len += 1
@@ -489,7 +512,7 @@ class AttackMiner(Miner):
                     miner_name=self.name,
                     size=block_size,
                     valid=0)
-                print("{} mined a {} block at height: {}, time: {}, size: {}".format(self.name, 'valid' if block.valid else 'invalid', block.height, block.time, block.size))
+                if Miner.LOGGING_MODE == "debug": print("{} mined a {} block at height: {}, time: {}, size: {}".format(self.name, 'valid' if block.valid else 'invalid', block.height, block.time, block.size))
                 # Once the block is mined it needs to be added. An event is triggered
                 self.notify_new_block(block)
             except simpy.Interrupt as i:

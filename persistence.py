@@ -23,4 +23,5 @@ def clear_db():
     patterns = ["days*", "miners*", "links*", "events*", "blocks*", "ids*"]
     for pattern in patterns:
         keys = r.keys(pattern)
-        for key in keys: r.delete(key)
+        for key in keys:
+            r.delete(key)
