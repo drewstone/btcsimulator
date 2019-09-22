@@ -20,6 +20,7 @@ class Miner(object):
     VERIFY_RATE = 200*1024
 
     LOGGING_MODE = "debug"
+    # LOGGING_MODE = 'none'
 
     def __init__(self, env, store, hashrate, verifyrate, seed_block):
         # Simulation environment
@@ -149,7 +150,7 @@ class Miner(object):
         # If block height is greater than chain head, update chain head and announce new head
         if (block.height > self.blocks[self.chain_head].height):
             self.chain_head = sha256(block)
-            self.announce_block(self.chain_head)
+            self.announce_block(block)
 
     def wait_for_new_block(self):
         while True:
@@ -203,12 +204,12 @@ class Miner(object):
     def announce_block(self, block):
         if self.id == 8:
             if Miner.LOGGING_MODE == "debug": print("Announce %s - %s" %(block, self.blocks[block].miner_id))
-        print("BCAST | {}".format(self.name))
+        # print("BCAST | {}".format(self.name))
         self.broadcast(Miner.HEAD_NEW, block)
 
     # Request a block to all links
     def request_block(self, block, to=None):
-        print(self.env.now, self.name, "REQUEST", block)
+        if Miner.LOGGING_MODE == "debug": print(self.env.now, self.name, "REQUEST", block, to)
         if to is None:
             self.broadcast(Miner.BLOCK_REQUEST, block)
         else:
@@ -241,6 +242,7 @@ class Miner(object):
                     if data.payload in self.blocks:
                         self.send_block(data.payload, data.origin)
                 elif data.action == Miner.BLOCK_RESPONSE:
+                    print("RRR | Received block {}".format(data.payload))
                     self.notify_received_block(data.payload)
                 elif data.action == Miner.HEAD_NEW:
                     # If we don't have the new head, we need to request it
@@ -302,14 +304,24 @@ class SPVMiner(Miner):
         # Start mining and store the process so it can be interrupted
         self.mining = self.env.process(self.mine_block())
 
+    def verify_block(self, block):
+        # If the previous block is not in miner blocks it is not possible to validate current block
+        if block.prev not in self.blocks:
+            return 0
+        # If block height isnt previous block + 1 it will not be valid
+        if block.height != self.blocks[block.prev].height + 1:
+            return -1
+        return 1
+
     def process_new_blocks(self):
         blocks_later = []
         # Validate every new block
         for block in self.blocks_new:
-            if Miner.LOGGING_MODE == "debug": print('PPP | {} processing block at height {}'.format(self.name, block.height))
+            if Miner.LOGGING_MODE == "debug": print('PPP | {} processing block at height {}, hash - {}, prev - {}'.format(self.name, block.height, sha256(block), block.prev))
             # Block validation is skipped for SPV miners
             yield self.env.timeout(0.0000001)
             valid = self.verify_block(block)
+            # print(block, valid)
             if valid == 1:
                 self.add_block(block)
             elif valid == 0:
@@ -330,11 +342,11 @@ class SPVMiner(Miner):
         # If block height is greater than chain head, update chain head and announce new head
         if block.height > self.blocks[self.chain_head].height:
             self.chain_head = sha256(block)
-            self.announce_block(self.chain_head)
+            self.announce_block(block)
         # keep track of other chain
         if block.height > self.blocks[self.chain_head_others].height and block.valid:
             self.chain_head_others = sha256(block)
-            self.announce_block(self.chain_head_others)
+            self.announce_block(block)
 
     def wait_for_new_block(self):
         while True:
@@ -345,7 +357,7 @@ class SPVMiner(Miner):
                 self.stop_mining()
                 #print("%d \tI stop mining" % self.id)
                 for event, block in blocks.items():
-                    if Miner.LOGGING_MODE == "debug": print("BBB | {} - received block at {}, height - {}, mined by {}, hash - {}".format(self.name, self.env.now, block.height, block.miner_name, sha256(block)))
+                    if Miner.LOGGING_MODE == "debug": print("BBB | {} - received block at {}, height - {}, mined by {}, hash - {}, prev = {}".format(self.name, self.env.now, block.height, block.miner_name, sha256(block), block.prev))
                     # Add the new block to the pending ones
                     self.blocks_new.append(block)
                     # Process new blocks
@@ -465,7 +477,7 @@ class AttackMiner(Miner):
             if block.height > self.blocks[self.chain_head].height:
                 self.chain_head = sha256(block)
                 self.invalid_len += 1
-                self.announce_block(self.chain_head)
+                self.announce_block(block)
         else:
             if block.height > self.blocks[self.chain_head_others].height:
                 self.chain_head_others = sha256(block)
@@ -477,7 +489,7 @@ class AttackMiner(Miner):
                     if ((block.height > self.blocks[self.chain_head].height and self.invalid_len == 0) or self.honest_len == self.tgt_cfrms):
                         self.chain_head = sha256(block)
                         if Miner.LOGGING_MODE == "debug": print('att - new chain head = {}, honest_lead = {}'.format(self.chain_head, self.honest_len))
-                        self.announce_block(self.chain_head)
+                        self.announce_block(block)
                 else:
                     self.honest_len += 1
         # if the attacker gets the final block for target confirmations here, reset values

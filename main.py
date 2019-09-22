@@ -198,6 +198,6 @@ def run_mixed_sim_with_varying_attack_env(alpha, beta, gamma, max_num_conf=21, d
     plt.savefig('artifacts/mixed-graph-{}-{}.png'.format(alpha, beta))    
 
 if __name__ == '__main__':
-    Simulator.mixed_spv_attack(0.2, 0.5, 1, 6, 1.0)
+    print(Simulator.mixed_spv_attack(0.2, 0.5, 1, 6, 1.0))
     # run_plain_simulation_with_varying_gamma(0.2)
     # run_mixed_sim_with_varying_attack_env(0.2, 0.4, 0.3)
